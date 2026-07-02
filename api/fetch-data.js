@@ -109,131 +109,114 @@ ${newsContext}
 
 INSTRUCTIONS:
 You are the Mumbai Monsoon Commute Desk. Using ONLY the real-time context above, complete the request:
-${prompt}`;
+${prompt}`;        let textResponse;
+        const attempts = [];
 
-        let textResponse;
-
+        // 1. Add OpenRouter free models if key is available
         if (openRouterKey && openRouterKey !== 'undefined' && openRouterKey !== 'null') {
-            // Use OpenRouter with automatic model fallback
-            console.log("Using OpenRouter API...");
             const models = [
                 'meta-llama/llama-3.3-70b-instruct:free',
                 'meta-llama/llama-3.2-3b-instruct:free',
                 'google/gemma-4-31b-it:free'
             ];
-            
-            let lastError;
             for (const model of models) {
-                try {
-                    console.log(`Trying OpenRouter model: ${model}`);
-                    const payload = {
-                        model: model,
-                        messages: [
-                            { role: 'user', content: augmentedPrompt }
-                        ],
-                        response_format: { type: 'json_object' }
-                    };
+                attempts.push({
+                    name: `OpenRouter (${model})`,
+                    fn: async () => {
+                        const payload = {
+                            model: model,
+                            messages: [
+                                { role: 'user', content: augmentedPrompt }
+                            ],
+                            response_format: { type: 'json_object' }
+                        };
+                        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${openRouterKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await response.json();
+                        if (!response.ok) {
+                            throw new Error(data.error?.message || JSON.stringify(data));
+                        }
+                        return data.choices?.[0]?.message?.content;
+                    }
+                });
+            }
+        }
 
-                    const apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-                    const openRouterRes = await fetch(apiUrl, {
+        // 2. Add Google Gemini directly if key is available
+        if (geminiKey && geminiKey !== 'undefined' && geminiKey !== 'null') {
+            attempts.push({
+                name: 'Google Gemini (gemini-2.5-flash)',
+                fn: async () => {
+                    const payload = {
+                        contents: [
+                            { parts: [{ text: augmentedPrompt }] }
+                        ],
+                        generationConfig: {
+                            responseMimeType: 'application/json'
+                        }
+                    };
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
                         method: 'POST',
                         headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${openRouterKey}`
+                            'Content-Type': 'application/json'
                         },
                         body: JSON.stringify(payload)
                     });
-
-                    const openRouterData = await openRouterRes.json();
-
-                    if (openRouterRes.ok) {
-                        textResponse = openRouterData.choices?.[0]?.message?.content;
-                        if (textResponse) {
-                            console.log(`Success with OpenRouter model: ${model}`);
-                            break;
-                        }
-                    } else {
-                        console.warn(`OpenRouter model ${model} failed:`, openRouterData);
-                        lastError = openRouterData;
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error?.message || JSON.stringify(data));
                     }
-                } catch (e) {
-                    console.warn(`Error querying OpenRouter model ${model}:`, e.message);
-                    lastError = { error: { message: e.message } };
+                    return data.candidates?.[0]?.content?.parts?.[0]?.text;
                 }
-            }
-
-            if (!textResponse) {
-                res.status(502).json({ error: 'Failed to fetch from OpenRouter API (all fallback models exhausted)', details: lastError });
-                return;
-            }
-
-        } else if (geminiKey && geminiKey !== 'undefined' && geminiKey !== 'null') {
-            // Use Google Gemini API directly
-            console.log("Using Google Gemini API...");
-            const payload = {
-                contents: [
-                    {
-                        parts: [{ text: augmentedPrompt }]
-                    }
-                ],
-                generationConfig: {
-                    responseMimeType: 'application/json'
-                }
-            };
-
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
-
-            const geminiRes = await fetch(apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
             });
+        }
 
-            const geminiData = await geminiRes.json();
-
-            if (!geminiRes.ok) {
-                console.error('Gemini API Error:', geminiData);
-                res.status(geminiRes.status).json({ error: 'Failed to fetch from Gemini API', details: geminiData });
-                return;
-            }
-
-            textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        } else {
-            // Fallback to keyless Pollinations AI (openai model)
-            console.log("No API keys configured. Falling back to keyless Pollinations AI...");
-            const payload = {
-                messages: [
-                    { role: 'user', content: augmentedPrompt }
-                ],
-                model: 'openai'
-            };
-
-            const apiUrl = 'https://text.pollinations.ai/';
-
-            const pollinationsRes = await fetch(apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!pollinationsRes.ok) {
-                const errText = await pollinationsRes.text();
-                if (pollinationsRes.status === 429) {
-                    res.status(500).json({
-                        error: 'API Key Configuration Required',
-                        details: 'Vercel\'s shared server IP is currently rate-limited by the keyless fallback API. To run this app, please configure your API key in Vercel\'s Environment Variables (either GEMINI_API_KEY from Google AI Studio, or OPENROUTER_API_KEY from openrouter.ai).'
-                    });
-                    return;
+        // 3. Add Pollinations AI as final keyless fallback
+        attempts.push({
+            name: 'Pollinations AI (openai)',
+            fn: async () => {
+                const payload = {
+                    messages: [
+                        { role: 'user', content: augmentedPrompt }
+                    ],
+                    model: 'openai'
+                };
+                const response = await fetch('https://text.pollinations.ai/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Status ${response.status}: ${errText}`);
                 }
-                throw new Error(`Pollinations AI responded with status ${pollinationsRes.status}: ${errText}`);
+                return await response.text();
             }
+        });
 
-            textResponse = await pollinationsRes.text();
+        // Loop through attempts sequentially until one succeeds
+        let lastError;
+        for (const attempt of attempts) {
+            try {
+                console.log(`Trying provider: ${attempt.name}`);
+                const result = await attempt.fn();
+                if (result) {
+                    textResponse = result;
+                    console.log(`Success with provider: ${attempt.name}`);
+                    break;
+                }
+            } catch (e) {
+                console.warn(`Provider ${attempt.name} failed:`, e.message);
+                lastError = { provider: attempt.name, message: e.message };
+            }
         }
         
         if (!textResponse) {
