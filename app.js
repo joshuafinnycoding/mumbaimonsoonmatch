@@ -304,6 +304,20 @@ function renderData(data) {
             `<li><a href="${s.url || '#'}" target="_blank" rel="noopener noreferrer">${s.name || 'Source'}</a></li>`
         ).join('');
     }
+    
+    // Render Engine Status
+    const engineEl = document.getElementById('engine-status');
+    if (engineEl) {
+        if (data.powered_by_llm) {
+            engineEl.textContent = "Engine: LLM AI Parser";
+            engineEl.style.background = "rgba(18, 54, 94, 0.1)";
+            engineEl.style.color = "var(--color-hero-start)";
+        } else {
+            engineEl.textContent = "Engine: Local Programmatic Parser";
+            engineEl.style.background = "rgba(16, 185, 129, 0.1)";
+            engineEl.style.color = "var(--color-green)";
+        }
+    }
 }
 
 function renderList(container, array, templateFn) {

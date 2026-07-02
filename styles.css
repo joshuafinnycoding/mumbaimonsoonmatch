@@ -349,3 +349,16 @@ h1, h2, h3 {
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+.engine-status {
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+    margin-top: 10px;
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.05);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}

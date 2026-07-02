@@ -366,6 +366,7 @@ ${prompt}`;
                 const textResponse = await queryLLM(openRouterKey, geminiKey, augmentedPrompt);
                 if (textResponse) {
                     responseJson = parseResilientJson(textResponse);
+                    responseJson.powered_by_llm = true;
                     llmSuccess = true;
                     console.log("Successfully generated response using LLM.");
                 }
@@ -378,6 +379,7 @@ ${prompt}`;
         if (!llmSuccess) {
             console.log("Running deterministic programmatic parser...");
             responseJson = runDeterministicParser(weatherData, newsItems);
+            responseJson.powered_by_llm = false;
         }
 
         res.setHeader('Access-Control-Allow-Origin', '*');
