@@ -201,6 +201,13 @@ ${prompt}`;
 
             if (!pollinationsRes.ok) {
                 const errText = await pollinationsRes.text();
+                if (pollinationsRes.status === 429) {
+                    res.status(500).json({
+                        error: 'API Key Configuration Required',
+                        details: 'Vercel\'s shared server IP is currently rate-limited by the keyless fallback API. To run this app, please configure your API key in Vercel\'s Environment Variables (either GEMINI_API_KEY from Google AI Studio, or OPENROUTER_API_KEY from openrouter.ai).'
+                    });
+                    return;
+                }
                 throw new Error(`Pollinations AI responded with status ${pollinationsRes.status}: ${errText}`);
             }
 
