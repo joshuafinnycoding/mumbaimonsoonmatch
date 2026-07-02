@@ -31,39 +31,16 @@ function parseGoogleNewsRSS(xml) {
     return items;
 }
 
-// Fetch real-time weather from Open-Meteo
-async function fetchWeather() {
-    try {
-        const res = await fetch("https://api.open-meteo.com/v1/forecast?latitude=19.0760&longitude=72.8777&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,wind_speed_10m");
-        if (!res.ok) return "Weather data temporarily unavailable";
-        const data = await res.json();
-        const cur = data.current;
-        return `Current Mumbai Weather (Open-Meteo):
-- Temp: ${cur.temperature_2m}°C (feels like ${cur.apparent_temperature}°C)
-- Humidity: ${cur.relative_humidity_2m}%
-- Rain/Precipitation: ${cur.precipitation} mm (Rain: ${cur.rain} mm)
-- Wind Speed: ${cur.wind_speed_10m} km/h`;
-    } catch (e) {
-        return "Weather data temporarily unavailable due to fetch error";
-    }
-}
-
-// Fetch latest traffic/monsoon news from Google News RSS
-async function fetchNews() {
-    try {
-        const res = await fetch("https://news.google.com/rss/search?q=Mumbai+monsoon+rains+railway+waterlogging&hl=en-IN&gl=IN&ceid=IN:en", {
-            headers: {
-                'User-Agent': 'Mozilla/5.0'
-            }
-        });
-        if (!res.ok) return "Local news updates temporarily unavailable";
-        const xml = await res.text();
-        const items = parseGoogleNewsRSS(xml).slice(0, 10);
-        if (items.length === 0) return "No recent news updates found.";
-        return "Recent Mumbai Monsoon/Traffic News:\n" + items.map((it, idx) => `${idx + 1}. [${it.source}] ${it.title} (${it.pubDate})\n   Link: ${it.link}`).join('\n');
-    } catch (e) {
-        return "Local news updates temporarily unavailable due to fetch error";
-    }
+// Weather interpretation codes based on WMO
+function weatherCodeText(code) {
+    if (code === 0) return "Clear Sky";
+    if (code >= 1 && code <= 3) return "Partly Cloudy";
+    if (code === 45 || code === 48) return "Foggy";
+    if (code >= 51 && code <= 55) return "Drizzle";
+    if (code >= 61 && code <= 65) return "Rainy";
+    if (code >= 80 && code <= 82) return "Rain Showers";
+    if (code >= 95 && code <= 99) return "Thunderstorms";
+    return "Cloudy";
 }
 
 export default async function handler(req, res) {
@@ -83,150 +60,167 @@ export default async function handler(req, res) {
     }
 
     try {
-        const { prompt } = req.body;
-        
-        if (!prompt) {
-            res.status(400).json({ error: 'Missing prompt in request body' });
-            return;
+        // Fetch weather from Open-Meteo (lat/long for Mumbai)
+        let weatherData = {
+            temperature_2m: 28,
+            relative_humidity_2m: 85,
+            precipitation: 0,
+            rain: 0,
+            wind_speed_10m: 15,
+            weather_code: 3
+        };
+        try {
+            const wRes = await fetch("https://api.open-meteo.com/v1/forecast?latitude=19.0760&longitude=72.8777&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,wind_speed_10m");
+            if (wRes.ok) {
+                const wJson = await wRes.json();
+                if (wJson.current) weatherData = wJson.current;
+            }
+        } catch (we) {
+            console.error("Weather fetch failed:", we.message);
         }
 
-        const openRouterKey = (process.env.OPENROUTER_API_KEY || "").trim();
-        const geminiKey = (process.env.GEMINI_API_KEY || "").trim();
+        // Fetch news headlines from Google News RSS
+        let newsItems = [];
+        try {
+            const nRes = await fetch("https://news.google.com/rss/search?q=Mumbai+monsoon+rains+railway+waterlogging&hl=en-IN&gl=IN&ceid=IN:en", {
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            });
+            if (nRes.ok) {
+                const xml = await nRes.text();
+                newsItems = parseGoogleNewsRSS(xml);
+            }
+        } catch (ne) {
+            console.error("News fetch failed:", ne.message);
+        }
 
-        // Fetch real-time weather and news context
-        const [weatherContext, newsContext] = await Promise.all([
-            fetchWeather(),
-            fetchNews()
-        ]);
+        // Process Weather Values
+        const temp_c = Math.round(weatherData.temperature_2m);
+        const condition = weatherCodeText(weatherData.weather_code);
+        const rain_today_mm = (weatherData.precipitation || 0).toString();
+        const humidity_pct = (weatherData.relative_humidity_2m || 80).toString();
+        const wind_kmh = Math.round(weatherData.wind_speed_10m || 15).toString();
+        const rain_chance_pct = (weatherData.precipitation > 0) ? "100" : (weatherData.relative_humidity_2m > 85 ? "80" : "40");
 
-        // Inject retrieved real-time context into prompt
-        const augmentedPrompt = `REAL-TIME WEATHER AND NEWS CONTEXT FOR MUMBAI:
-===
-${weatherContext}
-
-${newsContext}
-===
-
-INSTRUCTIONS:
-You are the Mumbai Monsoon Commute Desk. Using ONLY the real-time context above, complete the request:
-${prompt}`;        let textResponse;
-        const attempts = [];
-
-        // 1. Add OpenRouter free models if key is available
-        if (openRouterKey && openRouterKey !== 'undefined' && openRouterKey !== 'null') {
-            const models = [
-                'meta-llama/llama-3.3-70b-instruct:free',
-                'meta-llama/llama-3.2-3b-instruct:free',
-                'google/gemma-4-31b-it:free'
-            ];
-            for (const model of models) {
-                attempts.push({
-                    name: `OpenRouter (${model})`,
-                    fn: async () => {
-                        const payload = {
-                            model: model,
-                            messages: [
-                                { role: 'user', content: augmentedPrompt }
-                            ],
-                            response_format: { type: 'json_object' }
-                        };
-                        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${openRouterKey}`
-                            },
-                            body: JSON.stringify(payload)
-                        });
-                        const data = await response.json();
-                        if (!response.ok) {
-                            throw new Error(data.error?.message || JSON.stringify(data));
-                        }
-                        return data.choices?.[0]?.message?.content;
-                    }
-                });
+        // Parse Train Disruptions from news
+        const trainLines = [
+            { name: "Central Line", keywords: ["central railway", "central line", "kurla", "thane", "csmt", "harbour"] },
+            { name: "Western Line", keywords: ["western railway", "western line", "andheri", "bandra", "borivali", "dadar"] },
+            { name: "Mumbai Metro", keywords: ["metro"] }
+        ];
+        const trains = [];
+        for (const item of newsItems) {
+            const titleLower = item.title.toLowerCase();
+            for (const line of trainLines) {
+                if (line.keywords.some(k => titleLower.includes(k)) && 
+                    (titleLower.includes("delay") || titleLower.includes("suspend") || titleLower.includes("disrupt") || titleLower.includes("cancel") || titleLower.includes("slow") || titleLower.includes("waterlog") || titleLower.includes("shut"))) {
+                    trains.push({
+                        line: line.name,
+                        status: (titleLower.includes("suspend") || titleLower.includes("shut")) ? "Suspended" : "Delayed",
+                        detail: item.title.split(" - ")[0]
+                    });
+                    break;
+                }
             }
         }
-
-        // 2. Add Google Gemini directly if key is available
-        if (geminiKey && geminiKey !== 'undefined' && geminiKey !== 'null') {
-            attempts.push({
-                name: 'Google Gemini (gemini-2.5-flash)',
-                fn: async () => {
-                    const payload = {
-                        contents: [
-                            { parts: [{ text: augmentedPrompt }] }
-                        ],
-                        generationConfig: {
-                            responseMimeType: 'application/json'
-                        }
-                    };
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(payload)
-                    });
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw new Error(data.error?.message || JSON.stringify(data));
-                    }
-                    return data.candidates?.[0]?.content?.parts?.[0]?.text;
-                }
+        if (trains.length === 0) {
+            trains.push({
+                line: "Local Railway Networks",
+                status: "On time",
+                detail: "No major train disruptions reported in local news today."
             });
         }
 
-        // 3. Add Pollinations AI as final keyless fallback
-        attempts.push({
-            name: 'Pollinations AI (openai)',
-            fn: async () => {
-                const payload = {
-                    messages: [
-                        { role: 'user', content: augmentedPrompt }
-                    ],
-                    model: 'openai'
-                };
-                const response = await fetch('https://text.pollinations.ai/', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
+        // Parse Waterlogging Spots from news
+        const waterlogging = [];
+        const areas = ["Dadar", "Andheri", "Hindmata", "Kurla", "Sion", "Chembur", "Milan Subway", "King's Circle", "Goregaon", "Bandra", "Panvel", "Thane"];
+        const waterlogKeywords = ["waterlog", "flood", "submerge", "water accumulation", "inundat"];
+        for (const item of newsItems) {
+            const titleLower = item.title.toLowerCase();
+            if (waterlogKeywords.some(k => titleLower.includes(k))) {
+                const matchedArea = areas.find(a => titleLower.includes(a.toLowerCase())) || "Low-lying areas";
+                waterlogging.push({
+                    area: matchedArea,
+                    severity: (titleLower.includes("severe") || titleLower.includes("heavy") || titleLower.includes("extreme")) ? "Severe" : "Moderate",
+                    detail: item.title.split(" - ")[0]
                 });
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`Status ${response.status}: ${errText}`);
-                }
-                return await response.text();
             }
-        });
+        }
+        if (waterlogging.length === 0) {
+            waterlogging.push({
+                area: "General",
+                severity: "Low",
+                detail: "No major waterlogging reported across road intersections today."
+            });
+        }
 
-        // Loop through attempts sequentially until one succeeds
-        let lastError;
-        for (const attempt of attempts) {
-            try {
-                console.log(`Trying provider: ${attempt.name}`);
-                const result = await attempt.fn();
-                if (result) {
-                    textResponse = result;
-                    console.log(`Success with provider: ${attempt.name}`);
+        // Parse Commute Alerts from news
+        const commute = [];
+        const trafficKeywords = ["traffic", "jam", "slow", "block", "close", "divert", "waterlog"];
+        for (const item of newsItems) {
+            const titleLower = item.title.toLowerCase();
+            if (trafficKeywords.some(k => titleLower.includes(k)) && (titleLower.includes("road") || titleLower.includes("highway") || titleLower.includes("flyover"))) {
+                commute.push({
+                    route: "Road commute alert",
+                    time: "Expect delays",
+                    note: item.title.split(" - ")[0]
+                });
+            }
+        }
+        if (commute.length === 0) {
+            commute.push({
+                route: "Main Road Hubs",
+                time: "Normal",
+                note: "Traffic is moving normally across major flyovers."
+            });
+        }
+
+        // Determine IMD alert from news
+        let imdAlert = "Green (No alert issued)";
+        const alertColors = ["Red", "Orange", "Yellow"];
+        for (const item of newsItems) {
+            const titleLower = item.title.toLowerCase();
+            if (titleLower.includes("alert") && titleLower.includes("imd")) {
+                const color = alertColors.find(c => titleLower.includes(c.toLowerCase()));
+                if (color) {
+                    imdAlert = `${color} alert issued for Mumbai region today.`;
                     break;
                 }
-            } catch (e) {
-                console.warn(`Provider ${attempt.name} failed:`, e.message);
-                lastError = { provider: attempt.name, message: e.message };
             }
         }
-        
-        if (!textResponse) {
-            res.status(500).json({ error: 'Invalid response structure from LLM API' });
-            return;
+
+        // Generate dynamic rain forecast text
+        let rainSummary = `Current weather is ${condition.toLowerCase()} with temperature around ${temp_c}°C. `;
+        if (weatherData.precipitation > 0) {
+            rainSummary += `Precipitation is actively recorded at ${rain_today_mm} mm. Commuters are advised to carry umbrellas.`;
+        } else {
+            rainSummary += `No active rain recorded by regional weather sensors. Humidity is at ${humidity_pct}%.`;
         }
+
+        // Map Sources
+        const sources = newsItems.map(it => ({
+            name: it.source || "News Bulletin",
+            url: it.link
+        })).slice(0, 5);
+
+        // Final payload construction matching index.html expected response
+        const responseJson = {
+            temp_c,
+            condition,
+            rain_today_mm,
+            rain_chance_pct,
+            humidity_pct,
+            wind_kmh,
+            rain_summary: rainSummary,
+            imd_alert: imdAlert,
+            trains: trains.slice(0, 6),
+            waterlogging: waterlogging.slice(0, 6),
+            commute: commute.slice(0, 6),
+            sources
+        };
 
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', 'application/json');
-        res.status(200).send(textResponse);
+        res.status(200).json(responseJson);
 
     } catch (error) {
         console.error('Serverless function error:', error);
