@@ -236,7 +236,7 @@ function runDeterministicParser(weatherData, newsItems) {
 }
 
 // LLM fetch router
-async function queryLLM(openRouterKey, geminiKey, augmentedPrompt) {
+async function queryLLM(openRouterKey, geminiKey, augmentedPrompt, signal) {
     if (openRouterKey) {
         console.log("Querying OpenRouter (meta-llama/llama-3.3-70b-instruct)...");
         const payload = {
@@ -250,7 +250,8 @@ async function queryLLM(openRouterKey, geminiKey, augmentedPrompt) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${openRouterKey}`
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: signal
         });
         const data = await response.json();
         if (response.ok) {
@@ -267,7 +268,8 @@ async function queryLLM(openRouterKey, geminiKey, augmentedPrompt) {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: signal
         });
         const data = await response.json();
         if (response.ok) {
@@ -362,8 +364,14 @@ ${prompt}`;
         // Try LLM generation if keys are set
         if ((openRouterKey && openRouterKey !== 'undefined' && openRouterKey !== 'null') || 
             (geminiKey && geminiKey !== 'undefined' && geminiKey !== 'null')) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                console.warn("LLM query timed out after 10 seconds. Aborting...");
+                controller.abort();
+            }, 10000);
+
             try {
-                const textResponse = await queryLLM(openRouterKey, geminiKey, augmentedPrompt);
+                const textResponse = await queryLLM(openRouterKey, geminiKey, augmentedPrompt, controller.signal);
                 if (textResponse) {
                     responseJson = parseResilientJson(textResponse);
                     responseJson.powered_by_llm = true;
@@ -371,7 +379,13 @@ ${prompt}`;
                     console.log("Successfully generated response using LLM.");
                 }
             } catch (llmError) {
-                console.warn("LLM generation failed, falling back to deterministic parser:", llmError.message);
+                if (llmError.name === 'AbortError') {
+                    console.warn("LLM generation timed out, falling back to deterministic parser.");
+                } else {
+                    console.warn("LLM generation failed, falling back to deterministic parser:", llmError.message);
+                }
+            } finally {
+                clearTimeout(timeoutId);
             }
         }
 
