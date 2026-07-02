@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mumbai Monsoon Watch</title>
+    <meta name="description" content="Live, at-a-glance monsoon readout for Mumbai commuters">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="fallback-banner" class="banner amber hidden" role="alert">
+        Best-effort estimate, not live-sourced.
+    </div>
+
+    <main class="container">
+        <header class="hero" id="hero-section">
+            <div class="hero-top">
+                <h1>Mumbai Monsoon Watch</h1>
+                <button id="refresh-btn" class="refresh-btn" aria-label="Refresh data">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <div id="hero-content">
+                <div class="temp-condition">
+                    <span id="temp" class="temp">--°C</span>
+                    <span id="condition" class="condition">Loading...</span>
+                </div>
+                
+                <div class="weather-grid">
+                    <div class="weather-stat">
+                        <span class="stat-label">Rain Today</span>
+                        <span id="rain-today" class="stat-value">-- mm</span>
+                    </div>
+                    <div class="weather-stat">
+                        <span class="stat-label">Chance</span>
+                        <span id="rain-chance" class="stat-value">--%</span>
+                    </div>
+                    <div class="weather-stat">
+                        <span class="stat-label">Wind</span>
+                        <span id="wind" class="stat-value">-- km/h</span>
+                    </div>
+                    <div class="weather-stat">
+                        <span class="stat-label">Humidity</span>
+                        <span id="humidity" class="stat-value">--%</span>
+                    </div>
+                </div>
+
+                <div id="imd-alert" class="imd-alert hidden">--</div>
+                
+                <p id="rain-summary" class="rain-summary">Fetching latest forecast for Mumbai...</p>
+            </div>
+        </header>
+
+        <div id="last-updated" class="last-updated">Last updated: --</div>
+
+        <div id="loading-state" class="loading-state">
+            <div class="spinner"></div>
+            <p>Reading live sources — IMD · Railways · BMC · local news…</p>
+        </div>
+
+        <div id="error-box" class="error-box hidden">
+            <h3>Update Failed</h3>
+            <pre id="error-message"></pre>
+        </div>
+
+        <div id="content-sections" class="content-sections hidden">
+            <section class="card">
+                <h2>Local Trains</h2>
+                <div id="trains-list" class="list-group">
+                    <!-- Populated by JS -->
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Waterlogged Areas</h2>
+                <div id="waterlogging-list" class="list-group">
+                    <!-- Populated by JS -->
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Commute to Hubs</h2>
+                <div id="commute-list" class="list-group">
+                    <!-- Populated by JS -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="card">
+            <h3>Sources</h3>
+            <ul id="sources-list" class="sources-list">
+                <!-- Populated by JS -->
+            </ul>
+            <p class="disclaimer">
+                AI-synthesised figures can lag real conditions. In emergencies, always follow <strong>BMC (1916)</strong> and official railway advisories.
+            </p>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
