@@ -101,76 +101,131 @@ export default async function handler(req, res) {
         const wind_kmh = Math.round(weatherData.wind_speed_10m || 15).toString();
         const rain_chance_pct = (weatherData.precipitation > 0) ? "100" : (weatherData.relative_humidity_2m > 85 ? "80" : "40");
 
-        // Parse Train Disruptions from news
+        // 1. Parse Local Train status (exactly one entry per line)
         const trainLines = [
-            { name: "Central Line", keywords: ["central railway", "central line", "kurla", "thane", "csmt", "harbour"] },
-            { name: "Western Line", keywords: ["western railway", "western line", "andheri", "bandra", "borivali", "dadar"] },
-            { name: "Mumbai Metro", keywords: ["metro"] }
+            { name: "Western Line", keywords: ["western railway", "western line", "churchgate", "virar", "borivali"] },
+            { name: "Central Main Line", keywords: ["central railway", "central line", "kalyan", "dombivli", "titwala"] },
+            { name: "Harbour Line", keywords: ["harbour line", "harbour railway", "vashi", "belapur", "nerul"] },
+            { name: "Trans-Harbour Line", keywords: ["trans-harbour", "trans harbour", "airoli", "rabale", "kopar khairane"] },
+            { name: "Vasai–Roha Line", keywords: ["vasai", "roha", "diva", "panvel railway"] },
+            { name: "Uran Line", keywords: ["uran line", "uran railway"] },
+            { name: "Mumbai Metro", keywords: ["mumbai metro", "metro line", "metro 3", "metro 2", "metro 7"] },
+            { name: "Navi Mumbai Metro", keywords: ["navi mumbai metro"] }
         ];
-        const trains = [];
+
+        const trainsMap = {};
+        for (const line of trainLines) {
+            trainsMap[line.name] = {
+                line: line.name,
+                status: "On time",
+                detail: "No disruptions reported."
+            };
+        }
+
         for (const item of newsItems) {
             const titleLower = item.title.toLowerCase();
-            for (const line of trainLines) {
-                if (line.keywords.some(k => titleLower.includes(k)) && 
-                    (titleLower.includes("delay") || titleLower.includes("suspend") || titleLower.includes("disrupt") || titleLower.includes("cancel") || titleLower.includes("slow") || titleLower.includes("waterlog") || titleLower.includes("shut"))) {
-                    trains.push({
-                        line: line.name,
-                        status: (titleLower.includes("suspend") || titleLower.includes("shut")) ? "Suspended" : "Delayed",
-                        detail: item.title.split(" - ")[0]
-                    });
-                    break;
+            if (titleLower.includes("delay") || titleLower.includes("suspend") || titleLower.includes("disrupt") || 
+                titleLower.includes("cancel") || titleLower.includes("slow") || titleLower.includes("waterlog") || 
+                titleLower.includes("shut") || titleLower.includes("stalled") || titleLower.includes("hit")) {
+                for (const line of trainLines) {
+                    if (line.keywords.some(k => titleLower.includes(k))) {
+                        const status = (titleLower.includes("suspend") || titleLower.includes("shut") || titleLower.includes("stall")) ? "Suspended" : "Delayed";
+                        trainsMap[line.name] = {
+                            line: line.name,
+                            status: status,
+                            detail: item.title.split(" - ")[0]
+                        };
+                        break;
+                    }
                 }
             }
         }
-        if (trains.length === 0) {
-            trains.push({
-                line: "Local Railway Networks",
-                status: "On time",
-                detail: "No major train disruptions reported in local news today."
-            });
-        }
+        const trains = Object.values(trainsMap);
 
-        // Parse Waterlogging Spots from news
-        const waterlogging = [];
-        const areas = ["Dadar", "Andheri", "Hindmata", "Kurla", "Sion", "Chembur", "Milan Subway", "King's Circle", "Goregaon", "Bandra", "Panvel", "Thane"];
+        // 2. Parse Waterlogged Areas (specific area names)
+        const areas = [
+            { name: "Dadar", keywords: ["dadar", "hindmata"] },
+            { name: "Sion", keywords: ["sion", "king's circle", "kings circle"] },
+            { name: "Kurla", keywords: ["kurla", "ltt"] },
+            { name: "Andheri", keywords: ["andheri", "milan subway"] },
+            { name: "Goregaon", keywords: ["goregaon"] },
+            { name: "Chembur", keywords: ["chembur"] },
+            { name: "Bandra", keywords: ["bandra"] },
+            { name: "Thane", keywords: ["thane"] },
+            { name: "Borivali", keywords: ["borivali"] },
+            { name: "Panvel", keywords: ["panvel"] },
+            { name: "Vashi", keywords: ["vashi"] }
+        ];
+
         const waterlogKeywords = ["waterlog", "flood", "submerge", "water accumulation", "inundat"];
+        const waterloggingMap = {};
+
         for (const item of newsItems) {
             const titleLower = item.title.toLowerCase();
             if (waterlogKeywords.some(k => titleLower.includes(k))) {
-                const matchedArea = areas.find(a => titleLower.includes(a.toLowerCase())) || "Low-lying areas";
-                waterlogging.push({
-                    area: matchedArea,
-                    severity: (titleLower.includes("severe") || titleLower.includes("heavy") || titleLower.includes("extreme")) ? "Severe" : "Moderate",
-                    detail: item.title.split(" - ")[0]
-                });
+                for (const area of areas) {
+                    if (area.keywords.some(k => titleLower.includes(k))) {
+                        waterloggingMap[area.name] = {
+                            area: area.name,
+                            severity: (titleLower.includes("severe") || titleLower.includes("heavy") || titleLower.includes("extreme") || titleLower.includes("submerge")) ? "Severe" : "Moderate",
+                            detail: item.title.split(" - ")[0]
+                        };
+                        break;
+                    }
+                }
             }
         }
+        const waterlogging = Object.values(waterloggingMap);
         if (waterlogging.length === 0) {
             waterlogging.push({
-                area: "General",
+                area: "None reported",
                 severity: "Low",
-                detail: "No major waterlogging reported across road intersections today."
+                detail: "No active waterlogging reported in major hubs today."
             });
         }
 
-        // Parse Commute Alerts from news
+        // 3. Commute to Key Hubs (routes, travel times, and custom traffic delays)
+        const routes = [
+            { route: "Andheri → BKC", baseMin: 30, keywords: ["andheri", "bkc", "western express", "weh"] },
+            { route: "Thane → Dadar", baseMin: 50, keywords: ["thane", "dadar", "eastern express", "eeh"] },
+            { route: "Borivali → Andheri", baseMin: 40, keywords: ["borivali", "andheri", "western express", "weh"] },
+            { route: "Kurla → CSMT", baseMin: 35, keywords: ["kurla", "csmt", "central line"] },
+            { route: "Vashi → Kurla", baseMin: 30, keywords: ["vashi", "kurla", "harbour line"] },
+            { route: "Belapur → Panvel", baseMin: 25, keywords: ["belapur", "panvel", "highway"] }
+        ];
+
         const commute = [];
-        const trafficKeywords = ["traffic", "jam", "slow", "block", "close", "divert", "waterlog"];
-        for (const item of newsItems) {
-            const titleLower = item.title.toLowerCase();
-            if (trafficKeywords.some(k => titleLower.includes(k)) && (titleLower.includes("road") || titleLower.includes("highway") || titleLower.includes("flyover"))) {
-                commute.push({
-                    route: "Road commute alert",
-                    time: "Expect delays",
-                    note: item.title.split(" - ")[0]
-                });
+        const rainAmount = weatherData.precipitation || 0;
+        
+        let rainDelay = 0;
+        if (rainAmount > 0 && rainAmount <= 5) rainDelay = 10;
+        else if (rainAmount > 5 && rainAmount <= 15) rainDelay = 25;
+        else if (rainAmount > 15) rainDelay = 50;
+
+        for (const r of routes) {
+            let trafficDelay = 0;
+            let note = "Normal monsoon traffic speeds.";
+            for (const item of newsItems) {
+                const titleLower = item.title.toLowerCase();
+                if (r.keywords.some(k => titleLower.includes(k)) && 
+                    (titleLower.includes("traffic") || titleLower.includes("jam") || titleLower.includes("slow") || 
+                     titleLower.includes("waterlog") || titleLower.includes("delay") || titleLower.includes("choke"))) {
+                    trafficDelay = 20;
+                    note = item.title.split(" - ")[0];
+                    break;
+                }
             }
-        }
-        if (commute.length === 0) {
+            if (rainDelay > 20 || trafficDelay > 0) {
+                note = note !== "Normal monsoon traffic speeds." ? note : "Delayed due to heavy rainfall.";
+            }
+
+            const totalMin = r.baseMin + rainDelay + trafficDelay;
+            const timeRange = `${totalMin}–${totalMin + 15} min`;
+
             commute.push({
-                route: "Main Road Hubs",
-                time: "Normal",
-                note: "Traffic is moving normally across major flyovers."
+                route: r.route,
+                time: timeRange,
+                note: note
             });
         }
 
@@ -212,9 +267,9 @@ export default async function handler(req, res) {
             wind_kmh,
             rain_summary: rainSummary,
             imd_alert: imdAlert,
-            trains: trains.slice(0, 6),
-            waterlogging: waterlogging.slice(0, 6),
-            commute: commute.slice(0, 6),
+            trains,
+            waterlogging,
+            commute,
             sources
         };
 
