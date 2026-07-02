@@ -90,7 +90,8 @@ export default async function handler(req, res) {
             return;
         }
 
-        const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY;
+        const openRouterKey = (process.env.OPENROUTER_API_KEY || "").trim();
+        const geminiKey = (process.env.GEMINI_API_KEY || "").trim();
 
         // Fetch real-time weather and news context
         const [weatherContext, newsContext] = await Promise.all([
@@ -112,8 +113,9 @@ ${prompt}`;
 
         let textResponse;
 
-        if (apiKey) {
+        if (openRouterKey && openRouterKey !== 'undefined' && openRouterKey !== 'null') {
             // Use OpenRouter
+            console.log("Using OpenRouter API...");
             const payload = {
                 model: 'meta-llama/llama-3-8b-instruct:free',
                 messages: [
@@ -128,7 +130,7 @@ ${prompt}`;
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
+                    'Authorization': `Bearer ${openRouterKey}`
                 },
                 body: JSON.stringify(payload)
             });
@@ -142,9 +144,44 @@ ${prompt}`;
             }
 
             textResponse = openRouterData.choices?.[0]?.message?.content;
+
+        } else if (geminiKey && geminiKey !== 'undefined' && geminiKey !== 'null') {
+            // Use Google Gemini API directly
+            console.log("Using Google Gemini API...");
+            const payload = {
+                contents: [
+                    {
+                        parts: [{ text: augmentedPrompt }]
+                    }
+                ],
+                generationConfig: {
+                    responseMimeType: 'application/json'
+                }
+            };
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
+
+            const geminiRes = await fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const geminiData = await geminiRes.json();
+
+            if (!geminiRes.ok) {
+                console.error('Gemini API Error:', geminiData);
+                res.status(geminiRes.status).json({ error: 'Failed to fetch from Gemini API', details: geminiData });
+                return;
+            }
+
+            textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+
         } else {
-            // Fallback to keyless Pollinations AI (openai-fast model)
-            console.log("No API key configured. Falling back to keyless Pollinations AI...");
+            // Fallback to keyless Pollinations AI (openai model)
+            console.log("No API keys configured. Falling back to keyless Pollinations AI...");
             const payload = {
                 messages: [
                     { role: 'user', content: augmentedPrompt }
