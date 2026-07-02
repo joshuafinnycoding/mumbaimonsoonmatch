@@ -114,36 +114,58 @@ ${prompt}`;
         let textResponse;
 
         if (openRouterKey && openRouterKey !== 'undefined' && openRouterKey !== 'null') {
-            // Use OpenRouter
+            // Use OpenRouter with automatic model fallback
             console.log("Using OpenRouter API...");
-            const payload = {
-                model: 'meta-llama/llama-3.3-70b-instruct:free',
-                messages: [
-                    { role: 'user', content: augmentedPrompt }
-                ],
-                response_format: { type: 'json_object' }
-            };
+            const models = [
+                'meta-llama/llama-3.3-70b-instruct:free',
+                'meta-llama/llama-3.2-3b-instruct:free',
+                'google/gemma-4-31b-it:free'
+            ];
+            
+            let lastError;
+            for (const model of models) {
+                try {
+                    console.log(`Trying OpenRouter model: ${model}`);
+                    const payload = {
+                        model: model,
+                        messages: [
+                            { role: 'user', content: augmentedPrompt }
+                        ],
+                        response_format: { type: 'json_object' }
+                    };
 
-            const apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+                    const apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+                    const openRouterRes = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${openRouterKey}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
 
-            const openRouterRes = await fetch(apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${openRouterKey}`
-                },
-                body: JSON.stringify(payload)
-            });
+                    const openRouterData = await openRouterRes.json();
 
-            const openRouterData = await openRouterRes.json();
-
-            if (!openRouterRes.ok) {
-                console.error('OpenRouter API Error:', openRouterData);
-                res.status(openRouterRes.status).json({ error: 'Failed to fetch from OpenRouter API', details: openRouterData });
-                return;
+                    if (openRouterRes.ok) {
+                        textResponse = openRouterData.choices?.[0]?.message?.content;
+                        if (textResponse) {
+                            console.log(`Success with OpenRouter model: ${model}`);
+                            break;
+                        }
+                    } else {
+                        console.warn(`OpenRouter model ${model} failed:`, openRouterData);
+                        lastError = openRouterData;
+                    }
+                } catch (e) {
+                    console.warn(`Error querying OpenRouter model ${model}:`, e.message);
+                    lastError = { error: { message: e.message } };
+                }
             }
 
-            textResponse = openRouterData.choices?.[0]?.message?.content;
+            if (!textResponse) {
+                res.status(502).json({ error: 'Failed to fetch from OpenRouter API (all fallback models exhausted)', details: lastError });
+                return;
+            }
 
         } else if (geminiKey && geminiKey !== 'undefined' && geminiKey !== 'null') {
             // Use Google Gemini API directly
