@@ -117,7 +117,7 @@ ${prompt}`;
             // Use OpenRouter
             console.log("Using OpenRouter API...");
             const payload = {
-                model: 'meta-llama/llama-3-8b-instruct:free',
+                model: 'meta-llama/llama-3.3-70b-instruct:free',
                 messages: [
                     { role: 'user', content: augmentedPrompt }
                 ],
