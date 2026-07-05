@@ -66,6 +66,18 @@ function runDeterministicParser(weatherData, newsItems) {
     const wind_kmh = Math.round(weatherData.wind_speed_10m || 15).toString();
     const rain_chance_pct = (weatherData.precipitation > 0) ? "100" : (weatherData.relative_humidity_2m > 85 ? "80" : "40");
 
+    // Filter news items to the last 18 hours to prevent stale news from showing up
+    const now = new Date();
+    const recentNewsItems = newsItems.filter(item => {
+        if (!item.pubDate) return false;
+        const pubTime = Date.parse(item.pubDate);
+        if (isNaN(pubTime)) return false;
+        const ageHrs = (now.getTime() - pubTime) / (1000 * 60 * 60);
+        return ageHrs >= 0 && ageHrs <= 18;
+    });
+
+    console.log(`Smart Parser: Filtered news items from ${newsItems.length} to ${recentNewsItems.length} based on 18h age limit`);
+
     // Enforce exactly one status per train line
     const trainLines = [
         { name: "Western Line", keywords: ["western railway", "western line", "churchgate", "virar", "borivali"] },
@@ -87,13 +99,30 @@ function runDeterministicParser(weatherData, newsItems) {
         };
     }
 
-    for (const item of newsItems) {
+    const disruptionKeywords = ["delay", "suspend", "disrupt", "cancel", "slow", "waterlog", "shut", "stall", "hit", "block", "derail", "halt", "late", "flood", "affect", "submerge", "closed", "stop"];
+    const negationKeywords = ["plan", "prepare", "budget", "meeting", "review", "proposal", "pre-monsoon", "premonsoon", "ready", "readying", "trial", "mock", "drill", "will be", "warn", "predicts", "predict"];
+    const strongDisruptionKeywords = ["delayed", "suspended", "cancelled", "stalled", "waterlogged", "derailed", "shut down", "services hit"];
+    const trainTerms = ["train", "railway", "local", "track", "station", "metro", "suburban", "line", "services", "cr", "wr", "rail"];
+
+    for (const item of recentNewsItems) {
         const titleLower = item.title.toLowerCase();
-        if (titleLower.includes("delay") || titleLower.includes("suspend") || titleLower.includes("disrupt") || 
-            titleLower.includes("cancel") || titleLower.includes("slow") || titleLower.includes("waterlog") || 
-            titleLower.includes("shut") || titleLower.includes("stalled") || titleLower.includes("hit")) {
+        const hasDisruption = disruptionKeywords.some(k => titleLower.includes(k));
+        const hasNegation = negationKeywords.some(k => titleLower.includes(k));
+        const hasStrongDisruption = strongDisruptionKeywords.some(k => titleLower.includes(k));
+
+        if (hasDisruption && (!hasNegation || hasStrongDisruption)) {
+            const mentionsTrain = trainTerms.some(t => {
+                const regex = new RegExp(`\\b${t}\\b`, 'i');
+                return regex.test(titleLower);
+            });
+
             for (const line of trainLines) {
-                if (line.keywords.some(k => titleLower.includes(k))) {
+                const matchingKeyword = line.keywords.find(k => titleLower.includes(k));
+                if (matchingKeyword) {
+                    const isStationOnly = !matchingKeyword.includes("railway") && !matchingKeyword.includes("line") && !matchingKeyword.includes("metro");
+                    if (isStationOnly && !mentionsTrain) {
+                        continue; // Skip if it matches a station name (e.g. Borivali) but is likely about road traffic
+                    }
                     const status = (titleLower.includes("suspend") || titleLower.includes("shut") || titleLower.includes("stall")) ? "Suspended" : "Delayed";
                     trainsMap[line.name] = {
                         line: line.name,
@@ -125,9 +154,13 @@ function runDeterministicParser(weatherData, newsItems) {
     const waterlogKeywords = ["waterlog", "flood", "submerge", "water accumulation", "inundat"];
     const waterloggingMap = {};
 
-    for (const item of newsItems) {
+    for (const item of recentNewsItems) {
         const titleLower = item.title.toLowerCase();
-        if (waterlogKeywords.some(k => titleLower.includes(k))) {
+        const hasWaterlog = waterlogKeywords.some(k => titleLower.includes(k));
+        const hasNegation = negationKeywords.some(k => titleLower.includes(k));
+        const hasStrongWaterlog = ["waterlogged", "flooded", "submerged", "under water", "inundated"].some(k => titleLower.includes(k));
+
+        if (hasWaterlog && (!hasNegation || hasStrongWaterlog)) {
             for (const area of areas) {
                 if (area.keywords.some(k => titleLower.includes(k))) {
                     waterloggingMap[area.name] = {
@@ -170,7 +203,7 @@ function runDeterministicParser(weatherData, newsItems) {
     for (const r of routes) {
         let trafficDelay = 0;
         let note = "Normal monsoon traffic speeds.";
-        for (const item of newsItems) {
+        for (const item of recentNewsItems) {
             const titleLower = item.title.toLowerCase();
             if (r.keywords.some(k => titleLower.includes(k)) && 
                 (titleLower.includes("traffic") || titleLower.includes("jam") || titleLower.includes("slow") || 
@@ -194,16 +227,27 @@ function runDeterministicParser(weatherData, newsItems) {
         });
     }
 
-    let imdAlert = "Green (No alert issued)";
+    let imdAlert = "";
     const alertColors = ["Red", "Orange", "Yellow"];
-    for (const item of newsItems) {
+    for (const item of recentNewsItems) {
         const titleLower = item.title.toLowerCase();
-        if (titleLower.includes("alert") && titleLower.includes("imd")) {
+        if (titleLower.includes("alert") && (titleLower.includes("imd") || titleLower.includes("mumbai") || titleLower.includes("weather"))) {
             const color = alertColors.find(c => titleLower.includes(c.toLowerCase()));
             if (color) {
-                imdAlert = `${color} alert issued for Mumbai region today.`;
+                imdAlert = `${color} alert issued for Mumbai region.`;
                 break;
             }
+        }
+    }
+
+    if (!imdAlert) {
+        const rainAmount = weatherData.precipitation || 0;
+        if (rainAmount > 30) {
+            imdAlert = "Orange alert (Estimated from heavy rainfall of " + rainAmount + "mm)";
+        } else if (rainAmount > 15) {
+            imdAlert = "Yellow alert (Estimated from moderate rainfall of " + rainAmount + "mm)";
+        } else {
+            imdAlert = "Green (No active alert)";
         }
     }
 
@@ -214,10 +258,21 @@ function runDeterministicParser(weatherData, newsItems) {
         rainSummary += `No active rain recorded by regional weather sensors. Humidity is at ${humidity_pct}%.`;
     }
 
-    const sources = newsItems.map(it => ({
+    const sources = recentNewsItems.map(it => ({
         name: it.source || "News Bulletin",
         url: it.link
     })).slice(0, 5);
+
+    if (sources.length === 0) {
+        sources.push({
+            name: "Google News (Mumbai Rains Search)",
+            url: "https://news.google.com/search?q=Mumbai+monsoon+rains+railway+waterlogging"
+        });
+        sources.push({
+            name: "Open-Meteo Weather Forecast",
+            url: "https://open-meteo.com/en/forecast?latitude=19.0760&longitude=72.8777"
+        });
+    }
 
     return {
         temp_c,
